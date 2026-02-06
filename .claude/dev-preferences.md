@@ -1,0 +1,2 @@
+    - Preferred port: 8000
+    - Test user: juan@test.com

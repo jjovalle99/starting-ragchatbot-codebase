@@ -5,41 +5,60 @@ const API_URL = '/api';
 let currentSessionId = null;
 
 // DOM elements
-let chatMessages, chatInput, sendButton, totalCourses, courseTitles;
+let chatMessages = null;
+let chatInput = null;
+let sendButton = null;
+let totalCourses = null;
+let courseTitles = null;
+let newChatButton = null;
 
 // Initialize
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', initializeApp);
+
+function initializeApp() {
     // Get DOM elements after page loads
     chatMessages = document.getElementById('chatMessages');
     chatInput = document.getElementById('chatInput');
     sendButton = document.getElementById('sendButton');
     totalCourses = document.getElementById('totalCourses');
     courseTitles = document.getElementById('courseTitles');
-    
+    newChatButton = document.getElementById('newChatButton');
+
     setupEventListeners();
     createNewSession();
     loadCourseStats();
-});
+}
 
 // Event Listeners
 function setupEventListeners() {
     // Chat functionality
     sendButton.addEventListener('click', sendMessage);
-    chatInput.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') sendMessage();
-    });
-    
-    
+    chatInput.addEventListener('keypress', handleEnterKey);
+    newChatButton.addEventListener('click', handleNewChat);
+
     // Suggested questions
-    document.querySelectorAll('.suggested-item').forEach(button => {
-        button.addEventListener('click', (e) => {
-            const question = e.target.getAttribute('data-question');
-            chatInput.value = question;
-            sendMessage();
-        });
+    const suggestedButtons = document.querySelectorAll('.suggested-item');
+    suggestedButtons.forEach(button => {
+        button.addEventListener('click', handleSuggestedQuestion);
     });
 }
 
+function handleEnterKey(event) {
+    if (event.key === 'Enter') {
+        sendMessage();
+    }
+}
+
+function handleSuggestedQuestion(event) {
+    const question = event.target.getAttribute('data-question');
+    chatInput.value = question;
+    sendMessage();
+}
+
+function handleNewChat() {
+    createNewSession();
+    chatInput.focus();
+}
 
 // Chat Functions
 async function sendMessage() {
@@ -47,52 +66,67 @@ async function sendMessage() {
     if (!query) return;
 
     // Disable input
+    setInputState(false);
     chatInput.value = '';
-    chatInput.disabled = true;
-    sendButton.disabled = true;
 
     // Add user message
     addMessage(query, 'user');
 
-    // Add loading message - create a unique container for it
+    // Add loading message
     const loadingMessage = createLoadingMessage();
     chatMessages.appendChild(loadingMessage);
-    chatMessages.scrollTop = chatMessages.scrollHeight;
+    scrollToBottom();
 
     try {
-        const response = await fetch(`${API_URL}/query`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                query: query,
-                session_id: currentSessionId
-            })
-        });
-
-        if (!response.ok) throw new Error('Query failed');
-
-        const data = await response.json();
-        
-        // Update session ID if new
-        if (!currentSessionId) {
-            currentSessionId = data.session_id;
-        }
-
-        // Replace loading message with response
-        loadingMessage.remove();
-        addMessage(data.answer, 'assistant', data.sources);
-
+        const response = await queryAPI(query);
+        handleQueryResponse(response, loadingMessage);
     } catch (error) {
-        // Replace loading message with error
-        loadingMessage.remove();
-        addMessage(`Error: ${error.message}`, 'assistant');
+        handleQueryError(error, loadingMessage);
     } finally {
-        chatInput.disabled = false;
-        sendButton.disabled = false;
+        setInputState(true);
         chatInput.focus();
     }
+}
+
+function setInputState(enabled) {
+    chatInput.disabled = !enabled;
+    sendButton.disabled = !enabled;
+}
+
+async function queryAPI(query) {
+    const response = await fetch(`${API_URL}/query`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            query: query,
+            session_id: currentSessionId
+        })
+    });
+
+    if (!response.ok) {
+        throw new Error('Query failed');
+    }
+
+    return response.json();
+}
+
+function handleQueryResponse(data, loadingMessage) {
+    // Update session ID if new
+    if (!currentSessionId) {
+        currentSessionId = data.session_id;
+    }
+
+    // Replace loading message with response
+    loadingMessage.remove();
+    addMessage(data.answer, 'assistant', data.sources);
+}
+
+function handleQueryError(error, loadingMessage) {
+    // Replace loading message with error
+    loadingMessage.remove();
+    addMessage(`Error: ${error.message}`, 'assistant');
 }
 
 function createLoadingMessage() {
@@ -111,45 +145,69 @@ function createLoadingMessage() {
 }
 
 function addMessage(content, type, sources = null, isWelcome = false) {
-    const messageId = Date.now();
-    const messageDiv = document.createElement('div');
-    messageDiv.className = `message ${type}${isWelcome ? ' welcome-message' : ''}`;
-    messageDiv.id = `message-${messageId}`;
-    
-    // Convert markdown to HTML for assistant messages
-    const displayContent = type === 'assistant' ? marked.parse(content) : escapeHtml(content);
-    
+    const messageDiv = createMessageElement(type, isWelcome);
+    const displayContent = formatMessageContent(content, type);
+
     let html = `<div class="message-content">${displayContent}</div>`;
-    
+
     if (sources && sources.length > 0) {
-        html += `
-            <details class="sources-collapsible">
-                <summary class="sources-header">Sources</summary>
-                <div class="sources-content">${sources.join(', ')}</div>
-            </details>
-        `;
+        html += createSourcesHtml(sources);
     }
-    
+
     messageDiv.innerHTML = html;
     chatMessages.appendChild(messageDiv);
-    chatMessages.scrollTop = chatMessages.scrollHeight;
-    
-    return messageId;
+    scrollToBottom();
 }
 
-// Helper function to escape HTML for user messages
+function createMessageElement(type, isWelcome) {
+    const messageDiv = document.createElement('div');
+    const classes = ['message', type];
+    if (isWelcome) {
+        classes.push('welcome-message');
+    }
+    messageDiv.className = classes.join(' ');
+    return messageDiv;
+}
+
+function formatMessageContent(content, type) {
+    if (type === 'assistant') {
+        return marked.parse(content);
+    }
+    return escapeHtml(content);
+}
+
+function createSourcesHtml(sources) {
+    const sourceItems = sources.map(source => {
+        if (source.url) {
+            return `<a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer" class="source-pill">${escapeHtml(source.title)}</a>`;
+        }
+        return `<span class="source-pill source-pill--no-link">${escapeHtml(source.title)}</span>`;
+    }).join('');
+
+    return `
+        <details class="sources-collapsible">
+            <summary class="sources-header">Sources</summary>
+            <div class="sources-list">${sourceItems}</div>
+        </details>
+    `;
+}
+
 function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
 }
 
-// Removed removeMessage function - no longer needed since we handle loading differently
+function scrollToBottom() {
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+}
 
 async function createNewSession() {
     currentSessionId = null;
     chatMessages.innerHTML = '';
-    addMessage('Welcome to the Course Materials Assistant! I can help you with questions about courses, lessons and specific content. What would you like to know?', 'assistant', null, true);
+
+    const welcomeMessage = 'Welcome to the Course Materials Assistant! I can help you with questions about courses, lessons and specific content. What would you like to know?';
+    addMessage(welcomeMessage, 'assistant', null, true);
 }
 
 // Load course statistics
@@ -157,35 +215,45 @@ async function loadCourseStats() {
     try {
         console.log('Loading course stats...');
         const response = await fetch(`${API_URL}/courses`);
-        if (!response.ok) throw new Error('Failed to load course stats');
-        
+
+        if (!response.ok) {
+            throw new Error('Failed to load course stats');
+        }
+
         const data = await response.json();
         console.log('Course data received:', data);
-        
-        // Update stats in UI
-        if (totalCourses) {
-            totalCourses.textContent = data.total_courses;
-        }
-        
-        // Update course titles
-        if (courseTitles) {
-            if (data.course_titles && data.course_titles.length > 0) {
-                courseTitles.innerHTML = data.course_titles
-                    .map(title => `<div class="course-title-item">${title}</div>`)
-                    .join('');
-            } else {
-                courseTitles.innerHTML = '<span class="no-courses">No courses available</span>';
-            }
-        }
-        
+
+        updateCourseStats(data);
     } catch (error) {
         console.error('Error loading course stats:', error);
-        // Set default values on error
-        if (totalCourses) {
-            totalCourses.textContent = '0';
-        }
-        if (courseTitles) {
-            courseTitles.innerHTML = '<span class="error">Failed to load courses</span>';
-        }
+        displayCourseStatsError();
+    }
+}
+
+function updateCourseStats(data) {
+    // Update total courses
+    if (totalCourses) {
+        totalCourses.textContent = data.total_courses;
+    }
+
+    // Update course titles
+    if (!courseTitles) return;
+
+    if (data.course_titles && data.course_titles.length > 0) {
+        const titlesHtml = data.course_titles
+            .map(title => `<div class="course-title-item">${title}</div>`)
+            .join('');
+        courseTitles.innerHTML = titlesHtml;
+    } else {
+        courseTitles.innerHTML = '<span class="no-courses">No courses available</span>';
+    }
+}
+
+function displayCourseStatsError() {
+    if (totalCourses) {
+        totalCourses.textContent = '0';
+    }
+    if (courseTitles) {
+        courseTitles.innerHTML = '<span class="error">Failed to load courses</span>';
     }
 }
