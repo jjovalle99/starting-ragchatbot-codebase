@@ -1,0 +1,11 @@
+Course Title: Introduction to Testing
+Course Link: https://example.com/courses/testing
+Course Instructor: Jane Smith
+
+Lesson 1: Getting Started
+Lesson Link: https://example.com/courses/testing/lesson/1
+Welcome to the course on testing. In this lesson we will cover the basics of software testing. Software testing is the process of evaluating a system to find defects. There are many types of testing including unit testing, integration testing, and end-to-end testing. Unit tests verify individual components work correctly. Integration tests check that components work together. End-to-end tests validate the entire system.
+
+Lesson 2: Advanced Techniques
+Lesson Link: https://example.com/courses/testing/lesson/2
+In this lesson we explore advanced testing techniques. Mocking is a technique where you replace real objects with fake ones. Fixtures provide reusable test data and setup. Property-based testing generates random inputs to find edge cases. Test coverage measures how much of your code is tested. Aim for high coverage but focus on critical paths first.
