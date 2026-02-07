@@ -11,6 +11,7 @@ let sendButton = null;
 let totalCourses = null;
 let courseTitles = null;
 let newChatButton = null;
+let themeToggle = null;
 
 // Initialize
 document.addEventListener('DOMContentLoaded', initializeApp);
@@ -24,7 +25,10 @@ function initializeApp() {
     courseTitles = document.getElementById('courseTitles');
     newChatButton = document.getElementById('newChatButton');
 
+    themeToggle = document.getElementById('themeToggle');
+
     setupEventListeners();
+    initializeTheme();
     createNewSession();
     loadCourseStats();
 }
@@ -35,6 +39,9 @@ function setupEventListeners() {
     sendButton.addEventListener('click', sendMessage);
     chatInput.addEventListener('keypress', handleEnterKey);
     newChatButton.addEventListener('click', handleNewChat);
+
+    // Theme toggle
+    themeToggle.addEventListener('click', toggleTheme);
 
     // Suggested questions
     const suggestedButtons = document.querySelectorAll('.suggested-item');
@@ -258,5 +265,28 @@ function displayCourseStatsError() {
     }
     if (courseTitles) {
         courseTitles.innerHTML = '<span class="error">Failed to load courses</span>';
+    }
+}
+
+
+// Theme Functions
+function initializeTheme() {
+    const saved = localStorage.getItem('theme');
+    if (saved === 'light') {
+        document.body.setAttribute('data-theme', 'light');
+        themeToggle.setAttribute('aria-label', 'Switch to dark theme');
+    }
+}
+
+function toggleTheme() {
+    const isLight = document.body.getAttribute('data-theme') === 'light';
+    if (isLight) {
+        document.body.removeAttribute('data-theme');
+        themeToggle.setAttribute('aria-label', 'Switch to light theme');
+        localStorage.setItem('theme', 'dark');
+    } else {
+        document.body.setAttribute('data-theme', 'light');
+        themeToggle.setAttribute('aria-label', 'Switch to dark theme');
+        localStorage.setItem('theme', 'light');
     }
 }
