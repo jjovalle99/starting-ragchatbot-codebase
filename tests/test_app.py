@@ -1,103 +1,166 @@
-import os
-import sys
-from unittest.mock import patch, MagicMock, AsyncMock
+"""API endpoint tests using an inline FastAPI app (no static-file import issues)."""
+
 import pytest
-from fastapi.testclient import TestClient
+from unittest.mock import AsyncMock
 
 
-@pytest.fixture
-def client(tmp_path):
-    """TestClient with mocked rag_system and a temp frontend directory."""
-    # Create a fake frontend directory so StaticFiles resolves "../frontend"
-    frontend_dir = tmp_path / "frontend"
-    frontend_dir.mkdir()
-    (frontend_dir / "index.html").write_text("<html></html>")
+# ---------------------------------------------------------------------------
+# Root endpoint
+# ---------------------------------------------------------------------------
 
-    # Create backend dir — app.py uses relative "../frontend"
-    backend_dir = tmp_path / "backend"
-    backend_dir.mkdir()
+class TestRootEndpoint:
+    @pytest.mark.api
+    def test_root_returns_ok(self, api_client):
+        response = api_client.get("/")
+        assert response.status_code == 200
+        assert response.json() == {"status": "ok"}
 
-    original_cwd = os.getcwd()
-    os.chdir(str(backend_dir))
 
-    # Remove cached app module so re-import picks up new CWD
-    for mod_name in list(sys.modules.keys()):
-        if mod_name == "app" or mod_name.startswith("app."):
-            del sys.modules[mod_name]
-
-    try:
-        with patch("rag_system.AIGenerator"), \
-             patch("rag_system.VectorStore"), \
-             patch.dict(os.environ, {"OPENAI_API_KEY": "fake-key"}):
-            import app as app_module
-
-            mock_rag = MagicMock()
-            mock_rag.query = AsyncMock()
-            app_module.rag_system = mock_rag
-
-            yield TestClient(app_module.app, raise_server_exceptions=False), mock_rag
-    finally:
-        os.chdir(original_cwd)
-        # Clean up the cached module so it doesn't affect other tests
-        for mod_name in list(sys.modules.keys()):
-            if mod_name == "app" or mod_name.startswith("app."):
-                del sys.modules[mod_name]
-
+# ---------------------------------------------------------------------------
+# POST /api/query
+# ---------------------------------------------------------------------------
 
 class TestQueryEndpoint:
-    def test_query_endpoint_success(self, client):
-        test_client, mock_rag = client
-        mock_rag.session_manager.create_session.return_value = "session_1"
-        mock_rag.query.return_value = (
+    @pytest.mark.api
+    def test_success_creates_session(self, api_client, mock_rag_system):
+        mock_rag_system.session_manager.create_session.return_value = "new_session"
+        mock_rag_system.query.return_value = (
             "This is the answer.",
             [{"title": "Course A", "url": "https://example.com"}],
         )
 
-        response = test_client.post(
-            "/api/query", json={"query": "What is testing?"}
-        )
+        response = api_client.post("/api/query", json={"query": "What is testing?"})
+
         assert response.status_code == 200
         data = response.json()
         assert data["answer"] == "This is the answer."
+        assert data["session_id"] == "new_session"
         assert len(data["sources"]) == 1
-        assert data["session_id"] == "session_1"
+        assert data["sources"][0]["title"] == "Course A"
+        assert data["sources"][0]["url"] == "https://example.com"
 
-    def test_query_endpoint_with_session_id(self, client):
-        test_client, mock_rag = client
-        mock_rag.query.return_value = ("Answer", [])
+    @pytest.mark.api
+    def test_preserves_existing_session_id(self, api_client, mock_rag_system):
+        mock_rag_system.query.return_value = ("Answer", [])
 
-        response = test_client.post(
+        response = api_client.post(
             "/api/query",
             json={"query": "Follow up?", "session_id": "session_42"},
         )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["session_id"] == "session_42"
-        mock_rag.query.assert_called_once_with("Follow up?", "session_42")
 
-    def test_query_endpoint_missing_query(self, client):
-        test_client, _ = client
-        response = test_client.post("/api/query", json={})
+        assert response.status_code == 200
+        assert response.json()["session_id"] == "session_42"
+        mock_rag_system.query.assert_called_once_with("Follow up?", "session_42")
+        mock_rag_system.session_manager.create_session.assert_not_called()
+
+    @pytest.mark.api
+    def test_missing_query_returns_422(self, api_client):
+        response = api_client.post("/api/query", json={})
         assert response.status_code == 422
 
+    @pytest.mark.api
+    def test_empty_sources_list(self, api_client, mock_rag_system):
+        mock_rag_system.query.return_value = ("No sources needed.", [])
+
+        response = api_client.post("/api/query", json={"query": "Hello"})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["sources"] == []
+
+    @pytest.mark.api
+    def test_source_without_url(self, api_client, mock_rag_system):
+        mock_rag_system.query.return_value = (
+            "Answer",
+            [{"title": "Offline Course"}],
+        )
+
+        response = api_client.post("/api/query", json={"query": "test"})
+
+        assert response.status_code == 200
+        source = response.json()["sources"][0]
+        assert source["title"] == "Offline Course"
+        assert source["url"] is None
+
+    @pytest.mark.api
+    def test_rag_error_returns_500(self, api_client, mock_rag_system):
+        mock_rag_system.query = AsyncMock(side_effect=RuntimeError("LLM down"))
+
+        response = api_client.post("/api/query", json={"query": "anything"})
+
+        assert response.status_code == 500
+        assert "LLM down" in response.json()["detail"]
+
+    @pytest.mark.api
+    def test_response_content_type(self, api_client, mock_rag_system):
+        mock_rag_system.query.return_value = ("ok", [])
+
+        response = api_client.post("/api/query", json={"query": "hi"})
+
+        assert response.headers["content-type"] == "application/json"
+
+    @pytest.mark.api
+    def test_multiple_sources(self, api_client, mock_rag_system):
+        mock_rag_system.query.return_value = (
+            "Combined answer",
+            [
+                {"title": "Course A", "url": "https://a.com"},
+                {"title": "Course B", "url": "https://b.com"},
+                {"title": "Course C"},
+            ],
+        )
+
+        response = api_client.post("/api/query", json={"query": "broad question"})
+
+        assert response.status_code == 200
+        sources = response.json()["sources"]
+        assert len(sources) == 3
+        assert sources[2]["url"] is None
+
+
+# ---------------------------------------------------------------------------
+# GET /api/courses
+# ---------------------------------------------------------------------------
 
 class TestCoursesEndpoint:
-    def test_courses_endpoint_success(self, client):
-        test_client, mock_rag = client
-        mock_rag.get_course_analytics.return_value = {
+    @pytest.mark.api
+    def test_success(self, api_client, mock_rag_system):
+        mock_rag_system.get_course_analytics.return_value = {
             "total_courses": 2,
             "course_titles": ["Course A", "Course B"],
         }
 
-        response = test_client.get("/api/courses")
+        response = api_client.get("/api/courses")
+
         assert response.status_code == 200
         data = response.json()
         assert data["total_courses"] == 2
-        assert "Course A" in data["course_titles"]
+        assert data["course_titles"] == ["Course A", "Course B"]
 
-    def test_courses_endpoint_error(self, client):
-        test_client, mock_rag = client
-        mock_rag.get_course_analytics.side_effect = RuntimeError("DB error")
+    @pytest.mark.api
+    def test_empty_catalog(self, api_client, mock_rag_system):
+        mock_rag_system.get_course_analytics.return_value = {
+            "total_courses": 0,
+            "course_titles": [],
+        }
 
-        response = test_client.get("/api/courses")
+        response = api_client.get("/api/courses")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total_courses"] == 0
+        assert data["course_titles"] == []
+
+    @pytest.mark.api
+    def test_error_returns_500(self, api_client, mock_rag_system):
+        mock_rag_system.get_course_analytics.side_effect = RuntimeError("DB error")
+
+        response = api_client.get("/api/courses")
+
         assert response.status_code == 500
+        assert "DB error" in response.json()["detail"]
+
+    @pytest.mark.api
+    def test_response_content_type(self, api_client, mock_rag_system):
+        response = api_client.get("/api/courses")
+        assert response.headers["content-type"] == "application/json"

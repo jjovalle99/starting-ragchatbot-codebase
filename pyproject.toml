@@ -25,3 +25,12 @@ dev = [
 testpaths = ["tests"]
 pythonpath = ["backend"]
 asyncio_mode = "auto"
+addopts = "-ra -q"
+markers = [
+    "api: marks tests that hit FastAPI endpoints",
+    "unit: marks pure unit tests with no I/O",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning:fastapi.*:",
+    "ignore:resource_tracker:UserWarning",
+]

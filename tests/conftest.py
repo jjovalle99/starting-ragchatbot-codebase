@@ -1,5 +1,11 @@
 import os
+from typing import List, Optional
+from unittest.mock import MagicMock, AsyncMock
+
 import pytest
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
+from pydantic import BaseModel
 
 from models import Course, Lesson, CourseChunk
 from config import Config
@@ -7,6 +13,98 @@ from document_processor import DocumentProcessor
 from vector_store import VectorStore
 from session_manager import SessionManager
 from search_tools import ToolManager, CourseSearchTool, CourseOutlineTool
+
+
+# ---------------------------------------------------------------------------
+# Pydantic models matching backend/app.py (duplicated here so we never import
+# app.py and trigger its StaticFiles mount on a non-existent directory).
+# ---------------------------------------------------------------------------
+
+class _QueryRequest(BaseModel):
+    query: str
+    session_id: Optional[str] = None
+
+
+class _Source(BaseModel):
+    title: str
+    url: Optional[str] = None
+
+
+class _QueryResponse(BaseModel):
+    answer: str
+    sources: List[_Source]
+    session_id: str
+
+
+class _CourseStats(BaseModel):
+    total_courses: int
+    course_titles: List[str]
+
+
+# ---------------------------------------------------------------------------
+# Shared API testing fixtures
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def mock_rag_system():
+    """A MagicMock standing in for RAGSystem with async query support."""
+    mock = MagicMock()
+    mock.query = AsyncMock(return_value=("Default answer.", []))
+    mock.session_manager.create_session.return_value = "session_1"
+    mock.get_course_analytics.return_value = {
+        "total_courses": 0,
+        "course_titles": [],
+    }
+    return mock
+
+
+@pytest.fixture
+def test_app(mock_rag_system):
+    """A lightweight FastAPI app that mirrors the real API endpoints
+    without mounting static files or running the startup event."""
+
+    app = FastAPI()
+    rag = mock_rag_system
+
+    @app.get("/")
+    async def root():
+        return {"status": "ok"}
+
+    @app.post("/api/query", response_model=_QueryResponse)
+    async def query_documents(request: _QueryRequest):
+        try:
+            session_id = request.session_id
+            if not session_id:
+                session_id = rag.session_manager.create_session()
+            answer, sources = await rag.query(request.query, session_id)
+            source_objects = [
+                _Source(title=s.get("title", "Unknown"), url=s.get("url"))
+                for s in sources
+            ]
+            return _QueryResponse(
+                answer=answer, sources=source_objects, session_id=session_id
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get("/api/courses", response_model=_CourseStats)
+    async def get_course_stats():
+        try:
+            analytics = rag.get_course_analytics()
+            return _CourseStats(
+                total_courses=analytics["total_courses"],
+                course_titles=analytics["course_titles"],
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    return app
+
+
+@pytest.fixture
+def api_client(test_app):
+    """TestClient wrapping the lightweight test app."""
+    return TestClient(test_app, raise_server_exceptions=False)
 
 
 @pytest.fixture
