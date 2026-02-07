@@ -1,3 +1,5 @@
+"""In-memory session and conversation history management."""
+
 from typing import Dict, List, Optional
 from dataclasses import dataclass
 

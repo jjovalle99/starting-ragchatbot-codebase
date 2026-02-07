@@ -1,3 +1,5 @@
+"""Tool definitions and execution for course content search."""
+
 from typing import Dict, Any, Optional, List
 from vector_store import VectorStore, SearchResults
 

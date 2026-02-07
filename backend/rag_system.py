@@ -1,3 +1,5 @@
+"""Orchestrates RAG queries using session history, tools, and AI generation."""
+
 import os
 from typing import List, Tuple, Optional, Dict, Any, Set
 
@@ -155,7 +157,7 @@ class RAGSystem:
             print(f"Error processing {file_name}: {e}")
             return 0, 0
 
-    def query(
+    async def query(
         self,
         query: str,
         session_id: Optional[str] = None
@@ -179,7 +181,7 @@ class RAGSystem:
             history = self.session_manager.get_conversation_history(session_id)
 
         # Generate response using AI with tools
-        response = self.ai_generator.generate_response(
+        response = await self.ai_generator.generate_response(
             query=prompt,
             conversation_history=history,
             tools=self.tool_manager.get_tool_definitions(),

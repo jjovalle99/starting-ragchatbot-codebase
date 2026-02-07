@@ -1,3 +1,5 @@
+"""FastAPI application serving the RAG chatbot API and frontend."""
+
 import warnings
 warnings.filterwarnings("ignore", message="resource_tracker: There appear to be.*")
 
@@ -88,7 +90,7 @@ async def query_documents(request: QueryRequest):
             session_id = rag_system.session_manager.create_session()
 
         # Process query using RAG system
-        answer, sources = rag_system.query(request.query, session_id)
+        answer, sources = await rag_system.query(request.query, session_id)
 
         # Convert source dicts to Source objects
         source_objects = [

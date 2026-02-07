@@ -1,3 +1,5 @@
+"""ChromaDB vector store for embedding, storing, and searching course content."""
+
 import chromadb
 from chromadb.config import Settings
 from typing import List, Dict, Any, Optional

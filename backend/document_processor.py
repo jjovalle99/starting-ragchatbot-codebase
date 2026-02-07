@@ -1,3 +1,5 @@
+"""Parses and chunks course documents for vector store ingestion."""
+
 import os
 import re
 from typing import List, Tuple

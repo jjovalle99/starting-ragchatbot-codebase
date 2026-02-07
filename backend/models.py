@@ -1,3 +1,5 @@
+"""Pydantic models for API request and response schemas."""
+
 from typing import List, Dict, Optional
 from pydantic import BaseModel
 

@@ -1,10 +1,26 @@
-from openai import OpenAI
+"""Handles OpenAI API interactions and tool-calling for RAG query responses."""
+
+from dataclasses import dataclass
+import logging
+from openai import AsyncOpenAI
 from typing import List, Optional, Dict, Any
 import json
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ToolRoundContext:
+    round_number: int
+    max_rounds: int
+    tools: List
+    tool_manager: Any
 
 
 class AIGenerator:
     """Handles interactions with OpenAI's API for generating responses"""
+
+    MAX_TOOL_ROUNDS = 2
 
     SYSTEM_PROMPT = """You are an AI assistant specialized in course materials and educational content with access to tools for course information.
 
@@ -15,7 +31,7 @@ Available Tools:
 Tool Usage Guidelines:
 - Use search for questions about specific course content or detailed educational materials
 - Use outline for questions about course structure, available lessons, or what topics a course covers
-- **One tool call per query maximum**
+- **Up to two sequential tool calls per query** - you may call a tool, review the results, and call another tool if the first result is insufficient or you need to combine information from different sources
 - Synthesize results into accurate, fact-based responses
 - If a tool yields no results, state this clearly without offering alternatives
 
@@ -32,10 +48,10 @@ All responses must be:
 Provide only the direct answer to what was asked."""
 
     def __init__(self, api_key: str, model: str):
-        self.client = OpenAI(api_key=api_key)
+        self.client = AsyncOpenAI(api_key=api_key)
         self.model = model
 
-    def generate_response(
+    async def generate_response(
         self,
         query: str,
         conversation_history: Optional[str] = None,
@@ -79,27 +95,41 @@ Provide only the direct answer to what was asked."""
             params["tool_choice"] = "auto"
 
         # Call OpenAI API
-        response = self.client.chat.completions.create(**params)
+        response = await self.client.chat.completions.create(**params)
 
         # Handle tool calls if present
         if response.choices[0].finish_reason == "tool_calls" and tool_manager:
-            return self._handle_tool_execution(response, messages, tool_manager)
+            logger.info("Tool calls requested by model, starting tool execution rounds")
+            context = ToolRoundContext(
+                round_number=1,
+                max_rounds=self.MAX_TOOL_ROUNDS,
+                tools=tools,
+                tool_manager=tool_manager,
+            )
+            return await self._handle_tool_execution(response, messages, context)
 
+        logger.info("No tool calls, returning direct response")
         return response.choices[0].message.content
 
-    def _handle_tool_execution(
+    async def _handle_tool_execution(
         self,
         initial_response: Any,
         messages: List[Dict[str, Any]],
-        tool_manager: Any
+        context: ToolRoundContext,
     ) -> str:
         """
         Handle execution of tool calls and get follow-up response.
 
+        Supports up to `context.max_rounds` sequential tool-call rounds via
+        recursion. Each round executes the requested tools and makes a
+        follow-up API call. Intermediate rounds include tools so the model
+        can request another; the final round omits tools to force a text
+        response.
+
         Args:
             initial_response: The response containing tool use requests
             messages: Current conversation messages
-            tool_manager: Manager to execute tools
+            context: Tracks round number, max rounds, tools, and tool_manager
 
         Returns:
             Final response text after tool execution
@@ -109,22 +139,62 @@ Provide only the direct answer to what was asked."""
         messages.append(assistant_message)
 
         # Execute each tool call and add results
+        tool_count = len(assistant_message.tool_calls)
+        logger.info("Round %d/%d: executing %d tool call(s)", context.round_number, context.max_rounds, tool_count)
         for tool_call in assistant_message.tool_calls:
-            args = json.loads(tool_call.function.arguments)
-            result = tool_manager.execute_tool(tool_call.function.name, **args)
+            try:
+                args = json.loads(tool_call.function.arguments)
+            except json.JSONDecodeError as exc:
+                logger.warning("Round %d: failed to parse arguments for tool '%s': %s", context.round_number, tool_call.function.name, exc)
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": f"Error parsing tool arguments: {exc}",
+                })
+                continue
+
+            logger.info("Round %d: calling tool '%s' with args %s", context.round_number, tool_call.function.name, args)
+            try:
+                result = context.tool_manager.execute_tool(
+                    tool_call.function.name, **args
+                )
+            except Exception as exc:
+                logger.error("Round %d: tool '%s' raised an error: %s", context.round_number, tool_call.function.name, exc)
+                result = f"Error executing tool: {exc}"
 
             messages.append({
                 "role": "tool",
                 "tool_call_id": tool_call.id,
-                "content": result
+                "content": result,
             })
 
-        # Get final response
-        final_response = self.client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            temperature=0,
-            max_tokens=800
-        )
+        # Build follow-up API call params
+        params = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": 0,
+            "max_tokens": 800,
+        }
 
-        return final_response.choices[0].message.content
+        if context.round_number < context.max_rounds:
+            params["tools"] = context.tools
+            params["tool_choice"] = "auto"
+
+        follow_up = await self.client.chat.completions.create(**params)
+
+        # If the model wants another tool call and we have rounds left, recurse
+        if (
+            follow_up.choices[0].finish_reason == "tool_calls"
+            and context.round_number < context.max_rounds
+        ):
+            logger.info("Round %d: model requested another tool call, proceeding to round %d", context.round_number, context.round_number + 1)
+            next_context = ToolRoundContext(
+                round_number=context.round_number + 1,
+                max_rounds=context.max_rounds,
+                tools=context.tools,
+                tool_manager=context.tool_manager,
+            )
+            return await self._handle_tool_execution(follow_up, messages, next_context)
+
+        logger.info("Tool execution complete after %d round(s)", context.round_number)
+        return follow_up.choices[0].message.content

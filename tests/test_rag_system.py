@@ -1,5 +1,5 @@
 import os
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 import pytest
 
 from rag_system import RAGSystem
@@ -97,16 +97,16 @@ class TestAddCourseFolder:
 
 
 class TestQuery:
-    def test_query_calls_ai_generator(self, rag_system):
-        rag_system.ai_generator.generate_response.return_value = "Mocked AI answer"
-        answer, sources = rag_system.query("What is testing?", session_id=None)
+    async def test_query_calls_ai_generator(self, rag_system):
+        rag_system.ai_generator.generate_response = AsyncMock(return_value="Mocked AI answer")
+        answer, sources = await rag_system.query("What is testing?", session_id=None)
         assert answer == "Mocked AI answer"
         rag_system.ai_generator.generate_response.assert_called_once()
 
-    def test_query_stores_session_history(self, rag_system):
-        rag_system.ai_generator.generate_response.return_value = "Answer"
+    async def test_query_stores_session_history(self, rag_system):
+        rag_system.ai_generator.generate_response = AsyncMock(return_value="Answer")
         session_id = rag_system.session_manager.create_session()
-        rag_system.query("Question?", session_id=session_id)
+        await rag_system.query("Question?", session_id=session_id)
         history = rag_system.session_manager.get_conversation_history(session_id)
         assert "Question?" in history
         assert "Answer" in history

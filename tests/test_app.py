@@ -1,6 +1,6 @@
 import os
 import sys
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 import pytest
 from fastapi.testclient import TestClient
 
@@ -32,6 +32,7 @@ def client(tmp_path):
             import app as app_module
 
             mock_rag = MagicMock()
+            mock_rag.query = AsyncMock()
             app_module.rag_system = mock_rag
 
             yield TestClient(app_module.app, raise_server_exceptions=False), mock_rag
