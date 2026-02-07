@@ -38,7 +38,7 @@ function setupEventListeners() {
 
     // Suggested questions
     const suggestedButtons = document.querySelectorAll('.suggested-item');
-    suggestedButtons.forEach(button => {
+    suggestedButtons.forEach((button) => {
         button.addEventListener('click', handleSuggestedQuestion);
     });
 }
@@ -101,8 +101,8 @@ async function queryAPI(query) {
         },
         body: JSON.stringify({
             query: query,
-            session_id: currentSessionId
-        })
+            session_id: currentSessionId,
+        }),
     });
 
     if (!response.ok) {
@@ -177,12 +177,14 @@ function formatMessageContent(content, type) {
 }
 
 function createSourcesHtml(sources) {
-    const sourceItems = sources.map(source => {
-        if (source.url) {
-            return `<a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer" class="source-pill">${escapeHtml(source.title)}</a>`;
-        }
-        return `<span class="source-pill source-pill--no-link">${escapeHtml(source.title)}</span>`;
-    }).join('');
+    const sourceItems = sources
+        .map((source) => {
+            if (source.url) {
+                return `<a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer" class="source-pill">${escapeHtml(source.title)}</a>`;
+            }
+            return `<span class="source-pill source-pill--no-link">${escapeHtml(source.title)}</span>`;
+        })
+        .join('');
 
     return `
         <details class="sources-collapsible">
@@ -206,7 +208,8 @@ async function createNewSession() {
     currentSessionId = null;
     chatMessages.innerHTML = '';
 
-    const welcomeMessage = 'Welcome to the Course Materials Assistant! I can help you with questions about courses, lessons and specific content. What would you like to know?';
+    const welcomeMessage =
+        'Welcome to the Course Materials Assistant! I can help you with questions about courses, lessons and specific content. What would you like to know?';
     addMessage(welcomeMessage, 'assistant', null, true);
 }
 
@@ -241,7 +244,7 @@ function updateCourseStats(data) {
 
     if (data.course_titles && data.course_titles.length > 0) {
         const titlesHtml = data.course_titles
-            .map(title => `<div class="course-title-item">${title}</div>`)
+            .map((title) => `<div class="course-title-item">${title}</div>`)
             .join('');
         courseTitles.innerHTML = titlesHtml;
     } else {
